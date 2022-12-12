@@ -20,7 +20,7 @@ def main():
     links = scrape_dex_links(root)
 
     for name, link in links:
-        download_dex_link(name, link, ignore_already_downloaded=True)
+        download_dex_link(name, link, ignore_already_downloaded=False)
 
 
 #
@@ -40,6 +40,8 @@ def scrape_dex_links(root: Element) -> Iterable[Tuple[str, str]]:
 
     for row in (row for row in dex_body if row.tag == "tr"):
         cols = row.findall("td")
+        if len(cols) < 2:
+            continue
         link_tag = cols[1].find("a")
         yield link_tag.text, f"https://pokemondb.net{link_tag.get('href')}"
 

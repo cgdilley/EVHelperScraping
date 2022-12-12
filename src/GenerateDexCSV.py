@@ -17,7 +17,8 @@ def main():
                                     "Hidden ability", "Dex #", "HP", "Attack", "Defense", "Sp.Attack", "Sp.Defense",
                                     "Speed"])
         writer.writeheader()
-        filtered_data = (d for d in data if not d.variant.is_mega())
+        # filtered_data = (d for d in data if not d.variant.is_mega())
+        filtered_data = data
         sorted_data = sorted(filtered_data, key=lambda d: d.dex_entries.get_dex_num(Dex.NATIONAL))
         for d in sorted_data:
             final_ids = list(d.misc_info.evolution_line.get_final_evolution_ids()) \

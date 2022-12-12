@@ -32,7 +32,7 @@ def scrape_page(file: str) -> Iterable[PokemonData]:
 
     name = root.find(".//*[@id='main']").find("h1").text
 
-    tab_list = root.find(".//*[@class='tabs-tab-list']")
+    tab_list = root.find(".//*[@class='sv-tabs-tab-list']")
     tabs = [(a.text, a.get("href")[1:]) for a in tab_list.findall("a")]
 
     default = parse_pokemon_from_tab(root=root,
@@ -56,6 +56,9 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
         "misc_info": MiscInfo(),
         "dex_entries": DexEntryCollection()
     }
+
+    if pokemon_name.startswith("Nidoran"):
+        pokemon_name = pokemon_name[:8]
 
     #
 
@@ -92,7 +95,6 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
         args["variant"] = Variant(form="Primal", region=region)
         variant_name = _merge_variant_names(variant_name, PrefixVariantName("Primal", {}))
     else:
-        args["variant"] = Variant(form=variant_str, region=region)
         if pokemon_name in ["Kyurem", "Hoopa"]:
             variant_name = _merge_variant_names(variant_name, SuffixVariantName(variant_str, {}, comma=False))
         elif pokemon_name == "Rotom":
@@ -101,8 +103,13 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
             variant_name = _merge_variant_names(variant_name, PrefixVariantName(variant_str, {}))
         elif variant_str == "Ash-":
             variant_name = _merge_variant_names(variant_name, PrefixVariantName("Ash", {}, spacer="-"))
+        elif pokemon_name == "Tauros" and variant_str:
+            variant_name = _merge_variant_names(variant_name, PrefixVariantName(Region.PALDEA.region_descriptor(), {}))
+            region = Region.PALDEA
         else:
             variant_name = _merge_variant_names(variant_name, SuffixVariantName(variant_str, {}, comma=True))
+        args["variant"] = Variant(form=variant_str, region=region)
+
     args["name"] = Name(pokemon_name, {}, variant_name=variant_name)
 
     #
@@ -165,7 +172,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
                 if tag.tag == "br":
                     curr_num = int(tag.tail) if tag.tail else None
                 else:
-                    args["dex_entries"].add_entry(DexEntry(Dex(tag.text[1:-1]), curr_num))
+                    args["dex_entries"].add_entry(DexEntry(Dex.parse(tag.text[1:-1]), curr_num))
 
     for row in training:
         header = row.find("th").text
@@ -221,23 +228,24 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
     stats_div = tab_div.find(".//*[@id='dex-stats']...")
     stats_table = stats_div.find(".//table")
     if stats_table is None:
-        return None
-    stats_table = stats_table.find("tbody")
+        args["stats"] = BaseStats(0, 0, 0, 0, 0, 0)
+    else:
+        stats_table = stats_table.find("tbody")
 
-    stats = dict()
-    for row in stats_table:
-        header = row.find("th").text
-        value = int(row.find("td").text)
-        stat = {
-            "HP": "hp",
-            "Attack": "attack",
-            "Defense": "defense",
-            "Sp. Atk": "special_attack",
-            "Sp. Def": "special_defense",
-            "Speed": "speed"
-        }[header]
-        stats[stat] = value
-    args["stats"] = BaseStats(**stats)
+        stats = dict()
+        for row in stats_table:
+            header = row.find("th").text
+            value = int(row.find("td").text)
+            stat = {
+                "HP": "hp",
+                "Attack": "attack",
+                "Defense": "defense",
+                "Sp. Atk": "special_attack",
+                "Sp. Def": "special_defense",
+                "Speed": "speed"
+            }[header]
+            stats[stat] = value
+        args["stats"] = BaseStats(**stats)
 
     #
 
@@ -276,9 +284,7 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
                     continue
                 evo_scraped["name"] = FormatUtils.format_name_as_id(Name(evo_scraped["name"].strip(), {}))
         elif pokemon_info.tag == "span" and is_class(pokemon_info, "infocard-arrow"):
-            evo_text = pokemon_info.find("small").text
-            m = re.match(r"\(Level (\d+)\)", evo_text)
-            evo_scraped["evo"] = LevelUpEvolutionType(level=int(m.group(1))) if m else UnknownEvolutionType()
+            evo_scraped["evo"] = _parse_evo_type(pokemon_info)
         elif pokemon_info.tag == "span" and is_class(pokemon_info, "infocard-evo-split"):
             evo_scraped = {"evolutions": []}
             for span in pokemon_info.findall("span"):
@@ -300,6 +306,17 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
         return evo_scraped
 
     return convert_scraped_to_line(evo_scraped)
+
+
+def _parse_evo_type(evo_elem: Element) -> EvolutionType:
+    evo_text = evo_elem.find("small")
+    m = re.match(r"\(Level (\d+)\)", evo_text.text)
+    if m:
+        return LevelUpEvolutionType(level=int(m.group(1)))
+    if evo_text.text == "(use ":
+        return ItemEvolutionType(item=evo_text.find("a").text)
+    return UnknownEvolutionType()
+
 
 
 def _merge_variant_names(name1: Optional[VariantName], name2: Optional[VariantName]) -> VariantName:
