@@ -15,6 +15,8 @@ HTML_DIR = "../data/html"
 DEX_DIRECTORY = "pokemon"
 OUTPUT_FILE = "../data/json/dex.json"
 
+WEIGHT_REGEX = re.compile(r"([\d.]+).*kg.*\(([\d.]+).*lbs\)")
+
 
 def main():
     pages = os.listdir(os.path.join(HTML_DIR, DEX_DIRECTORY))
@@ -174,6 +176,16 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
                 else:
                     args["dex_entries"].add_entry(DexEntry(Dex.parse(tag.text[1:-1]), curr_num))
 
+        #
+
+        elif header == "Weight":
+            col = row.find("td")
+            if not col.text:
+                continue
+            match = WEIGHT_REGEX.match(col.text)
+            if match:
+                args["misc_info"].weight = float(match.group(1))
+
     for row in training:
         header = row.find("th").text
 
@@ -185,6 +197,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
 
             ev_yield = EVYield(*(({
                                       "Attack": Stat.ATTACK, "Defense": Stat.DEFENSE, "Special Attack": Stat.SP_ATTACK,
+                                      "Sp. Atk": Stat.SP_ATTACK, "Sp. Def": Stat.SP_DEFENSE,
                                       "Special Defense": Stat.SP_DEFENSE, "Speed": Stat.SPEED, "HP": Stat.HP
                                   }[stat], int(value)) for stat_info in stats for value, stat in
                                  (stat_info.split(" ", maxsplit=1),)))
@@ -257,12 +270,17 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
         # return c in elem.classes
         return "class" in elem.attrib and c in elem.attrib["class"].strip().split(" ")
 
+    def get_all_spans(elem: Element) -> Iterable[Element]:
+        for x in elem.findall("span"):
+            yield x
+            yield from get_all_spans(x)
+
     evo_scraped = {"evolutions": []}
     for pokemon_info in reversed(evo_line_info):
         if pokemon_info.tag == "div" and is_class(pokemon_info, "infocard"):
             if "name" in evo_scraped:
                 evo_scraped = {"evolutions": [evo_scraped]}
-            for span in pokemon_info.findall("span"):
+            for span in get_all_spans(pokemon_info):
                 if not is_class(span, "infocard-lg-data"):
                     continue
                 for info in span:
@@ -316,7 +334,6 @@ def _parse_evo_type(evo_elem: Element) -> EvolutionType:
     if evo_text.text == "(use ":
         return ItemEvolutionType(item=evo_text.find("a").text)
     return UnknownEvolutionType()
-
 
 
 def _merge_variant_names(name1: Optional[VariantName], name2: Optional[VariantName]) -> VariantName:
