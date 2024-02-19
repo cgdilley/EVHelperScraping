@@ -1,3 +1,5 @@
 .idea/*
 *.lock
 data/html/*
+*.pyc
+**/__pycache__/
