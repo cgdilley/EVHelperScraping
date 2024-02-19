@@ -267,12 +267,14 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
         evo_lines = list(EvolutionLine.merge(*evo_lines))
 
         formatted_name = FormatUtils.format_name_as_id(args["name"], args["variant"], ignore_mega=True)
-        evo_lines = [evl for evl in evo_lines
+        filtered_lines = [evl for evl in evo_lines
                      if formatted_name in evl.get_all_pokemon_ids_in_line()]
-        if len(evo_lines) == 1:
-            args["misc_info"].evolution_line = evo_lines[0]
-        elif len(evo_lines) > 1:
+        if len(filtered_lines) == 1:
+            args["misc_info"].evolution_line = filtered_lines[0]
+        elif len(filtered_lines) > 1:
             print("MULTIPLE EVO LINES FOUND")
+        elif len(evo_lines) == 1:
+            args["misc_info"].evolution_line = evo_lines[0]
         else:
             args["misc_info"].evolution_line = EvolutionLine(formatted_name)
 
@@ -383,7 +385,7 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
 def _parse_evo_type(evo_elem: Element) -> EvolutionType:
     evo_text = evo_elem.find("small")
     text = "".join(evo_text.itertext())
-    m = re.search(r"\(Level (\d+)(, in (.*))?\)", text)
+    m = re.search(r"\(Level (\d+)(, in (.*))?(, outside (.*))?\)", text)
     if m:
         return LevelUpEvolutionType(level=int(m.group(1)),
                                     location=m.group(3) if m.group(3) else None)
