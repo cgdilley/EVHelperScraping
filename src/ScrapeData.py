@@ -9,13 +9,16 @@ from lxml.html import XHTMLParser, fromstring, Element, tostring
 import re
 import json
 import os
-from typing import Collection, Tuple, Iterable, Optional, Union
+from typing import Collection, Tuple, Iterable, Optional, Union, List
 
 HTML_DIR = "../data/html"
 DEX_DIRECTORY = "pokemon"
 OUTPUT_FILE = "../data/json/dex.json"
 
 WEIGHT_REGEX = re.compile(r"([\d.]+).*kg.*\(([\d.]+).*lbs\)")
+HEIGHT_REGEX = re.compile(r"([\d.]+).*m.*\([\d'\"′″]+\)")
+CATCH_RATE_REGEX = re.compile(r"\s*(\d+)( \(.*\))?")
+GENDER_REGEX = re.compile(r"Genderless|(([\d.]+)% male, ([\d.]+)% female)")
 
 
 def main():
@@ -124,6 +127,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
     tables = tab_div.findall(".//*[@class='vitals-table']")
     pokedex_data = tables[0].find("tbody")
     training = tables[1].find("tbody")
+    breeding = tables[2].find("tbody")
 
     for row in pokedex_data:
         header = row.find("th").text
@@ -186,6 +190,16 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
             if match:
                 args["misc_info"].weight = float(match.group(1))
 
+        #
+
+        elif header == "Height":
+            col = row.find("td")
+            if not col.text:
+                continue
+            match = HEIGHT_REGEX.match(col.text)
+            if match:
+                args["misc_info"].height = float(match.group(1))
+
     for row in training:
         header = row.find("th").text
 
@@ -202,6 +216,33 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
                                   }[stat], int(value)) for stat_info in stats for value, stat in
                                  (stat_info.split(" ", maxsplit=1),)))
             args["misc_info"].ev_yield = ev_yield
+
+        if header == "Catch rate":
+            col = row.find("td")
+            if not col.text.strip():
+                continue
+            m = CATCH_RATE_REGEX.match(col.text)
+            if m:
+                args["misc_info"].catch_rate = int(m.group(1))
+
+    args["misc_info"].gender_ratio = GenderRatio(0, 0)
+    for row in breeding:
+        header = row.find("th").text
+
+        if header == "Egg Groups":
+            text = "".join(row.find("td").itertext())
+            if not text:
+                continue
+            args["misc_info"].egg_groups = [EggGroup(x.strip()) for x in text.split(",")]
+
+        if header == "Gender":
+            text = "".join(row.find("td").itertext()).strip()
+            if not text:
+                continue
+            m = GENDER_REGEX.search(text)
+            if m:
+                args["misc_info"].gender_ratio = GenderRatio(0, 0) if m.group(0) == "Genderless" else \
+                    GenderRatio(float(m.group(2)) / 100, float(m.group(3)) / 100)
 
     #
 
@@ -232,6 +273,8 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
             args["misc_info"].evolution_line = evo_lines[0]
         elif len(evo_lines) > 1:
             print("MULTIPLE EVO LINES FOUND")
+        else:
+            args["misc_info"].evolution_line = EvolutionLine(formatted_name)
 
     #
 
@@ -277,7 +320,8 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
 
     evo_scraped = {"evolutions": []}
     for pokemon_info in reversed(evo_line_info):
-        if pokemon_info.tag == "div" and is_class(pokemon_info, "infocard"):
+        if pokemon_info.tag == "div" and (
+                is_class(pokemon_info, "infocard") or is_class(pokemon_info, "ingocard-list-evo")):
             if "name" in evo_scraped:
                 evo_scraped = {"evolutions": [evo_scraped]}
             for span in get_all_spans(pokemon_info):
@@ -290,23 +334,33 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
                         if evo_scraped["name"] in info.text:
                             evo_scraped["name"] = info.text
                         else:
-                            split_ = info.text.split(" ")
-                            if split_[0] in ["Alolan", "Galarian"]:
-                                evo_scraped["name"] = split_[0] + " " + evo_scraped["name"]
-                                if len(split_) > 1:
-                                    evo_scraped["name"] += " " + " ".join(split_[1:])
-                            else:
-                                evo_scraped["name"] += " " + info.text
+                            split_: List[str] = info.text.split(" ")
+                            evo_scraped["variant"] = Variant()
+                            if Region.is_region_descriptor(split_[0]):
+                                evo_scraped["variant"] = Variant.merge(
+                                    evo_scraped["variant"],
+                                    Variant(region=Region.parse_descriptor(split_.pop(0))))
+
+                            if len(split_) > 0 and split_[0] in ("Male", "Female"):
+                                evo_scraped["variant"] = Variant.merge(
+                                    evo_scraped["variant"],
+                                    Variant(gender=Gender[split_.pop(0).upper()]))
+
+                            if len(split_) > 0:
+                                evo_scraped["variant"] = Variant.merge(
+                                    evo_scraped["variant"],
+                                    Variant(form=" ".join(split_)))
+
                 if "name" not in evo_scraped:
                     print("FAILED TO FIND EVO NAME")
                     continue
-                evo_scraped["name"] = FormatUtils.format_name_as_id(Name(evo_scraped["name"].strip(), {}))
+                evo_scraped["name"] = FormatUtils.format_name_as_id(Name(evo_scraped["name"].strip(), {}),
+                                                                    evo_scraped.get("variant", None))
         elif pokemon_info.tag == "span" and is_class(pokemon_info, "infocard-arrow"):
             evo_scraped["evo"] = _parse_evo_type(pokemon_info)
         elif pokemon_info.tag == "span" and is_class(pokemon_info, "infocard-evo-split"):
             evo_scraped = {"evolutions": []}
-            for span in pokemon_info.findall("span"):
-                div = span.find("div")
+            for div in pokemon_info.findall("div"):
                 evo_line = _scrape_evolution_line(div)
                 evo_scraped["evolutions"].append(evo_line)
             # evo_scraped = {"evolutions": [evo_line for evo_line in (_scrape_evolution_line(span.find("div"))
@@ -328,11 +382,23 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
 
 def _parse_evo_type(evo_elem: Element) -> EvolutionType:
     evo_text = evo_elem.find("small")
-    m = re.match(r"\(Level (\d+)\)", evo_text.text)
+    text = "".join(evo_text.itertext())
+    m = re.search(r"\(Level (\d+)(, in (.*))?\)", text)
     if m:
-        return LevelUpEvolutionType(level=int(m.group(1)))
-    if evo_text.text == "(use ":
-        return ItemEvolutionType(item=evo_text.find("a").text)
+        return LevelUpEvolutionType(level=int(m.group(1)),
+                                    location=m.group(3) if m.group(3) else None)
+    if text.startswith("(use "):
+        item_link = evo_text.find("a")
+        if item_link is not None:
+            return ItemEvolutionType(item=item_link.text)
+    m = re.match(r"\([Tt]rade( holding (.*))?\)", text)
+    if m:
+        return TradingEvolutionType(None if not m.group(2) else m.group(2))
+    m = re.match(r"\(after (.*) learned\)", text)
+    if m:
+        return MoveKnowledgeEvolutionType(m.group(1))
+    if text == "(high Friendship)":
+        return FriendshipEvolutionType()
     return UnknownEvolutionType()
 
 

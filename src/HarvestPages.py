@@ -17,7 +17,7 @@ DEX_DIRECTORY = "pokemon"
 def main():
 
     root = load_dex_file()
-    links = scrape_dex_links(root)
+    links = list(scrape_dex_links(root))
 
     for name, link in links:
         download_dex_link(name, link, ignore_already_downloaded=False)

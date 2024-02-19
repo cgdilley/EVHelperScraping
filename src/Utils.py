@@ -3,7 +3,8 @@ from lxml.html import XHTMLParser, fromstring, Element, tostring
 import os
 import re
 
-IMG_REGEX = re.compile(r"(<img[^>]+)>")
+IMG_REGEX = re.compile(r"(<(source|img)[^>]+)>")
+
 
 def parse_html(filename: str) -> Element:
 
