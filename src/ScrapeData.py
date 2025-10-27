@@ -1,15 +1,14 @@
+from EVHelperCore import FormatUtils
 from EVHelperCore.Objects import *
-from EVHelperCore.Utils import FormatUtils, ShowdownUtils
-from EVHelperCore.Utils.DictUtils import unique_by
 
 import Utils
 
-from lxml.html import XHTMLParser, fromstring, Element, tostring
+from lxml.html import HtmlElement as Element
 
 import re
 import json
 import os
-from typing import Collection, Tuple, Iterable, Optional, Union, List
+from typing import Iterable, Any, TypeVar
 
 HTML_DIR = "../data/html"
 DEX_DIRECTORY = "pokemon"
@@ -55,11 +54,11 @@ def scrape_page(file: str) -> Iterable[PokemonData]:
 
 
 def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_name: str,
-                           default: Optional[PokemonData] = None) -> Optional[PokemonData]:
-    args = {
+                           default: PokemonData | None = None) -> PokemonData | None:
+    args: dict[str, Any] = {
         "move_list": MoveList(),
         "misc_info": MiscInfo(),
-        "dex_entries": DexEntryCollection()
+        "dex_entries": DexEntryCollection.of()
     }
 
     if pokemon_name.startswith("Nidoran"):
@@ -77,7 +76,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
     remaining_words = " ".join(variant_str_split[1:])
     if Region.is_region_descriptor(first_word):
         region = Region.parse_descriptor(first_word)
-        variant_name = PrefixVariantName(first_word, {})
+        variant_name = PrefixVariantName(default=first_word)
         variant_str = remaining_words.strip()
     else:
         region = Region.NONE
@@ -87,35 +86,38 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
         args["variant"] = Variant(region=region)
     elif variant_str in ["Male", "Female"]:
         args["variant"] = Variant(gender=Gender(variant_str.upper()), region=region)
-        variant_name = _merge_variant_names(variant_name, SuffixVariantName(variant_str, {}))
+        variant_name = _merge_variant_names(variant_name, SuffixVariantName(default=variant_str))
     elif variant_str.startswith("Mega"):
         mega_type = MegaType.X if variant_str.endswith("X") else MegaType.Y if variant_str.endswith("Y") else \
             MegaType.NORMAL
         args["variant"] = Variant(mega_type=mega_type, region=region)
         if mega_type == MegaType.NORMAL:
-            variant_name = _merge_variant_names(variant_name, PrefixVariantName("Mega", {}))
+            variant_name = _merge_variant_names(variant_name, PrefixVariantName(default="Mega"))
         else:
-            variant_name = _merge_variant_names(variant_name, CircumfixVariantName("Mega", variant_str[-1], {}, {}))
+            variant_name = _merge_variant_names(variant_name,
+                                                CircumfixVariantName(prefix=PrefixVariantName(default="Mega"),
+                                                                     suffix=SuffixVariantName(default=variant_str[-1])))
     elif variant_str == "Primal":
         args["variant"] = Variant(form="Primal", region=region)
-        variant_name = _merge_variant_names(variant_name, PrefixVariantName("Primal", {}))
+        variant_name = _merge_variant_names(variant_name, PrefixVariantName(default="Primal"))
     else:
         if pokemon_name in ["Kyurem", "Hoopa"]:
-            variant_name = _merge_variant_names(variant_name, SuffixVariantName(variant_str, {}, comma=False))
+            variant_name = _merge_variant_names(variant_name, SuffixVariantName(default=variant_str, comma=False))
         elif pokemon_name == "Rotom":
-            variant_name = _merge_variant_names(variant_name, SuffixVariantName(variant_str, {}, spacer="-"))
+            variant_name = _merge_variant_names(variant_name, SuffixVariantName(default=variant_str, spacer="-"))
         elif variant_str in ["Partner", "Own Tempo"] or pokemon_name in ["Necrozma"]:
-            variant_name = _merge_variant_names(variant_name, PrefixVariantName(variant_str, {}))
+            variant_name = _merge_variant_names(variant_name, PrefixVariantName(default=variant_str))
         elif variant_str == "Ash-":
-            variant_name = _merge_variant_names(variant_name, PrefixVariantName("Ash", {}, spacer="-"))
+            variant_name = _merge_variant_names(variant_name, PrefixVariantName(default="Ash", spacer="-"))
         elif pokemon_name == "Tauros" and variant_str:
-            variant_name = _merge_variant_names(variant_name, PrefixVariantName(Region.PALDEA.region_descriptor(), {}))
+            variant_name = _merge_variant_names(variant_name,
+                                                PrefixVariantName(default=Region.PALDEA.region_descriptor()))
             region = Region.PALDEA
         else:
-            variant_name = _merge_variant_names(variant_name, SuffixVariantName(variant_str, {}, comma=True))
+            variant_name = _merge_variant_names(variant_name, SuffixVariantName(default=variant_str, comma=True))
         args["variant"] = Variant(form=variant_str, region=region)
 
-    args["name"] = Name(pokemon_name, {}, variant_name=variant_name)
+    args["name"] = Name(default=pokemon_name, variant=variant_name)
 
     #
 
@@ -138,7 +140,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
             types = [Type(a.text.upper()) for a in row.find("td").findall("a")]
             if len(types) == 0:
                 return None
-            args["typing"] = Typing(*types)
+            args["typing"] = Typing.of(*types)
 
         #
 
@@ -148,11 +150,11 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
             for span in col.findall("span") + col.findall("small"):
                 ability_link = span.find("a")
                 if ability_link.tail == " (hidden ability)":
-                    abilities["hidden_ability"] = Ability(ability_link.text)
+                    abilities["hidden"] = Ability(name=ability_link.text)
                 elif span.text == "1. ":
-                    abilities["primary_ability"] = Ability(ability_link.text)
+                    abilities["primary"] = Ability(name=ability_link.text)
                 elif span.text == "2. ":
-                    abilities["secondary_ability"] = Ability(ability_link.text)
+                    abilities["secondary"] = Ability(name=ability_link.text)
             if len(abilities) == 0:
                 if default:
                     args["abilities"] = default.abilities
@@ -165,7 +167,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
 
         elif header == "National №":
             col = row.find("td").find("strong")
-            args["dex_entries"].add_entry(DexEntry(Dex.NATIONAL, int(col.text)))
+            args["dex_entries"].add_entry(DexEntry(dex=Dex.NATIONAL, number=int(col.text)))
 
         #
 
@@ -178,7 +180,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
                 if tag.tag == "br":
                     curr_num = int(tag.tail) if tag.tail else None
                 else:
-                    args["dex_entries"].add_entry(DexEntry(Dex.parse(tag.text[1:-1]), curr_num))
+                    args["dex_entries"].add_entry(DexEntry(dex=Dex.parse(tag.text[1:-1]), number=curr_num))
 
         #
 
@@ -225,7 +227,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
             if m:
                 args["misc_info"].catch_rate = int(m.group(1))
 
-    args["misc_info"].gender_ratio = GenderRatio(0, 0)
+    args["misc_info"].gender_ratio = GenderRatio(male=0, female=0)
     for row in breeding:
         header = row.find("th").text
 
@@ -241,8 +243,8 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
                 continue
             m = GENDER_REGEX.search(text)
             if m:
-                args["misc_info"].gender_ratio = GenderRatio(0, 0) if m.group(0) == "Genderless" else \
-                    GenderRatio(float(m.group(2)) / 100, float(m.group(3)) / 100)
+                args["misc_info"].gender_ratio = GenderRatio(male=0, female=0) if m.group(0) == "Genderless" else \
+                    GenderRatio(male=float(m.group(2)) / 100, female=float(m.group(3)) / 100)
 
     #
 
@@ -251,11 +253,12 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
 
     if args["name"].name in ["Nincada", "Ninjask", "Shedinja"]:
         args["misc_info"].evolution_line = \
-            EvolutionLine("NINCADA",
-                          (Evolution("NINCADA", "NINJASK", LevelUpEvolutionType(20)),
-                           EvolutionLine("NINJASK")),
-                          (Evolution("NINCADA", "SHEDINJA", UnknownEvolutionType()),
-                           EvolutionLine("SHEDINJA")))
+            EvolutionLine.of("NINCADA",
+                             (Evolution(frm="NINCADA", to="NINJASK",
+                                        evo=LevelUpEvolutionType(level=20)),
+                              EvolutionLine.of("NINJASK")),
+                             (Evolution(frm="NINCADA", to="SHEDINJA", evo=UnknownEvolutionType()),
+                              EvolutionLine.of("SHEDINJA")))
     else:
         evo_lines = []
 
@@ -268,7 +271,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
 
         formatted_name = FormatUtils.format_name_as_id(args["name"], args["variant"], ignore_mega=True)
         filtered_lines = [evl for evl in evo_lines
-                     if formatted_name in evl.get_all_pokemon_ids_in_line()]
+                          if formatted_name in evl.get_all_pokemon_ids_in_line()]
         if len(filtered_lines) == 1:
             args["misc_info"].evolution_line = filtered_lines[0]
         elif len(filtered_lines) > 1:
@@ -276,7 +279,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
         elif len(evo_lines) == 1:
             args["misc_info"].evolution_line = evo_lines[0]
         else:
-            args["misc_info"].evolution_line = EvolutionLine(formatted_name)
+            args["misc_info"].evolution_line = EvolutionLine.of(formatted_name)
 
     #
 
@@ -310,7 +313,7 @@ def parse_pokemon_from_tab(root: Element, tab_id: str, tab_name: str, pokemon_na
     return PokemonData(**args)
 
 
-def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]:
+def _scrape_evolution_line(evo_line_info: Element) -> EvolutionLine | dict:
     def is_class(elem: Element, c: str) -> bool:
         # return c in elem.classes
         return "class" in elem.attrib and c in elem.attrib["class"].strip().split(" ")
@@ -320,7 +323,7 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
             yield x
             yield from get_all_spans(x)
 
-    evo_scraped = {"evolutions": []}
+    evo_scraped: dict[str, Any] = {"evolutions": []}
     for pokemon_info in reversed(evo_line_info):
         if pokemon_info.tag == "div" and (
                 is_class(pokemon_info, "infocard") or is_class(pokemon_info, "ingocard-list-evo")):
@@ -336,7 +339,7 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
                         if evo_scraped["name"] in info.text:
                             evo_scraped["name"] = info.text
                         else:
-                            split_: List[str] = info.text.split(" ")
+                            split_: list[str] = info.text.split(" ")
                             evo_scraped["variant"] = Variant()
                             if Region.is_region_descriptor(split_[0]):
                                 evo_scraped["variant"] = Variant.merge(
@@ -356,7 +359,7 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
                 if "name" not in evo_scraped:
                     print("FAILED TO FIND EVO NAME")
                     continue
-                evo_scraped["name"] = FormatUtils.format_name_as_id(Name(evo_scraped["name"].strip(), {}),
+                evo_scraped["name"] = FormatUtils.format_name_as_id(Name(default=evo_scraped["name"].strip()),
                                                                     evo_scraped.get("variant", None))
         elif pokemon_info.tag == "span" and is_class(pokemon_info, "infocard-arrow"):
             evo_scraped["evo"] = _parse_evo_type(pokemon_info)
@@ -369,12 +372,12 @@ def _scrape_evolution_line(evo_line_info: Element) -> Union[EvolutionLine, dict]
             #                                                         for span in pokemon_info.findall("span"))]}
 
     def convert_scraped_to_line(scraped: dict) -> EvolutionLine:
-        return EvolutionLine(scraped["name"],
-                             *(
-                                 (Evolution(scraped["name"], evo["name"], evo["evo"]),
-                                  convert_scraped_to_line(evo))
-                                 for evo in scraped["evolutions"]
-                             ))
+        return EvolutionLine.of(scraped["name"],
+                                *(
+                                    (Evolution(frm=scraped["name"], to=evo["name"], evo=evo["evo"]),
+                                     convert_scraped_to_line(evo))
+                                    for evo in scraped["evolutions"]
+                                ))
 
     if "evo" in evo_scraped:
         return evo_scraped
@@ -395,16 +398,18 @@ def _parse_evo_type(evo_elem: Element) -> EvolutionType:
             return ItemEvolutionType(item=item_link.text)
     m = re.match(r"\([Tt]rade( holding (.*))?\)", text)
     if m:
-        return TradingEvolutionType(None if not m.group(2) else m.group(2))
+        return TradingEvolutionType(holding=None if not m.group(2) else m.group(2))
     m = re.match(r"\(after (.*) learned\)", text)
     if m:
-        return MoveKnowledgeEvolutionType(m.group(1))
+        return MoveKnowledgeEvolutionType(move=m.group(1))
     if text == "(high Friendship)":
         return FriendshipEvolutionType()
     return UnknownEvolutionType()
 
 
-def _merge_variant_names(name1: Optional[VariantName], name2: Optional[VariantName]) -> VariantName:
+TVariantName = TypeVar("TVariantName", bound=VariantName)
+
+def _merge_variant_names(name1: VariantName | None, name2: VariantName | None) -> TVariantName:
     if name2 is None:
         return name1
     if name1 is None:
@@ -412,81 +417,40 @@ def _merge_variant_names(name1: Optional[VariantName], name2: Optional[VariantNa
 
     if isinstance(name1, PrefixVariantName):
         if isinstance(name2, PrefixVariantName):
-            return PrefixVariantName(f"{name1.name} {name2.name}",
-                                     {lang: f"{loc} {name2.localized_name(lang)}"
-                                      for lang, loc in name1._localized_names.items()
-                                      if lang in name2._localized_names},
+            return PrefixVariantName(default=f"{name1.name} {name2.name}",
+                                     localized={lang: f"{loc} {name2.localized_name(lang)}"
+                                                for lang, loc in name1.localized.items()
+                                                if lang in name2.localized},
                                      spacer=name2.spacer)
         elif isinstance(name2, SuffixVariantName):
-            return CircumfixVariantName(name1.name, name2.name, name1._localized_names, name2._localized_names,
-                                        suffix_comma=name2.comma == ",",
-                                        prefix_spacer=name1.spacer,
-                                        suffix_spacer=name2.spacer)
+            return CircumfixVariantName(prefix=name1, suffix=name2)
         elif isinstance(name2, CircumfixVariantName):
-            return CircumfixVariantName(f"{name1.name} {name2._default_prefix}", name2._default_suffix,
-                                        {lang: f"{loc} {name2._localized_prefix[lang]}"
-                                         for lang, loc in name1._localized_names.items()
-                                         if lang in name2._localized_prefix},
-                                        name2._localized_suffix,
-                                        suffix_comma=name2.suffix_comma == ",",
-                                        prefix_spacer=name2.prefix_spacer,
-                                        suffix_spacer=name2.suffix_spacer)
+            return CircumfixVariantName(prefix=_merge_variant_names(name1, name2.prefix),
+                                        suffix=name2.suffix)
 
     elif isinstance(name1, SuffixVariantName):
         if isinstance(name2, PrefixVariantName):
-            return CircumfixVariantName(name2.name, name1.name, name2._localized_names, name1._localized_names,
-                                        suffix_comma=name1.comma == ",",
-                                        prefix_spacer=name2.spacer)
+            return CircumfixVariantName(prefix=name2, suffix=name1)
         elif isinstance(name2, SuffixVariantName):
-            return SuffixVariantName(f"{name1.name}{',' if name2.comma else ''} {name2.name}",
-                                     {lang: f"{loc}{',' if name2.comma else ''} {name2.localized_name(lang)}"
-                                      for lang, loc in name1._localized_names.items()
-                                      if lang in name2._localized_names},
+            return SuffixVariantName(default=f"{name1.name}{',' if name2.comma else ''} {name2.name}",
+                                     localized={lang: f"{loc}{',' if name2.comma else ''} {name2.localized_name(lang)}"
+                                                for lang, loc in name1.localized.items()
+                                                if lang in name2.localized},
                                      comma=name1.comma == ",",
                                      spacer=name1.spacer)
         elif isinstance(name2, CircumfixVariantName):
-            return CircumfixVariantName(name2._default_prefix, f"{name1.name} {name2._default_suffix}",
-                                        name2._localized_prefix,
-                                        {lang: f"{loc} {name2._localized_suffix[lang]}"
-                                         for lang, loc in name1._localized_names.items()
-                                         if lang in name2._localized_suffix},
-                                        suffix_comma=name1.comma == ",",
-                                        prefix_spacer=name2.prefix_spacer,
-                                        suffix_spacer=name1.spacer)
+            return CircumfixVariantName(prefix=name2.prefix,
+                                        suffix=_merge_variant_names(name1, name2.suffix))
     elif isinstance(name1, CircumfixVariantName):
         if isinstance(name2, PrefixVariantName):
-            return CircumfixVariantName(f"{name1._default_prefix} {name2.name}",
-                                        name1._default_suffix,
-                                        {lang: f"{loc} {name2.localized_name(lang)}"
-                                         for lang, loc in name1._localized_prefix.items()
-                                         if lang in name2._localized_names},
-                                        name1._localized_suffix,
-                                        suffix_comma=name1.suffix_comma == ",",
-                                        prefix_spacer=name2.spacer,
-                                        suffix_spacer=name1.suffix_spacer)
+            return CircumfixVariantName(prefix=_merge_variant_names(name2, name1.prefix),
+                                        suffix=name1.suffix)
         elif isinstance(name2, SuffixVariantName):
-            return CircumfixVariantName(name1._default_prefix,
-                                        f"{name1._default_suffix} {name2.name}",
-                                        name1._localized_prefix,
-                                        {lang: f"{loc} {name2.localized_name(lang)}"
-                                         for lang, loc in name1._localized_suffix.items()
-                                         if lang in name2._localized_names},
-                                        suffix_comma=name2.comma == ",",
-                                        prefix_spacer=name1.prefix_spacer,
-                                        suffix_spacer=name1.suffix_spacer)
+            return CircumfixVariantName(prefix=name1.prefix,
+                                        suffix=_merge_variant_names(name1.suffix, name2))
         elif isinstance(name2, CircumfixVariantName):
-            return CircumfixVariantName(f"{name1._default_prefix} {name2._default_prefix}",
-                                        f"{name2._default_suffix} {name1._default_suffix}",
-                                        {lang: f"{loc} {name2._localized_prefix[lang]}"
-                                         for lang, loc in name1._localized_prefix.items()
-                                         if lang in name2._localized_prefix},
-                                        {lang: f"{name2._localized_suffix[lang]} {loc}"
-                                         for lang, loc in name1._localized_suffix.items()
-                                         if lang in name2._localized_suffix},
-                                        prefix_comma=name2.prefix_comma == ",",
-                                        suffix_comma=name2.suffix_comma == ",",
-                                        prefix_spacer=name2.prefix_spacer,
-                                        suffix_spacer=name2.suffix_spacer)
+            return CircumfixVariantName(prefix=_merge_variant_names(name1.prefix, name2.prefix),
+                                        suffix=_merge_variant_names(name2.suffix, name1.suffix))
     return name1
 
 

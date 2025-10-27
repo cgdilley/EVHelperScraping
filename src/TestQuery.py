@@ -1,9 +1,5 @@
-
-from EVHelperCore.Objects import *
-from EVHelperCore.Utils.ShowdownUtils import format_showdown_name
-
-import os
 import json
+from EVHelperCore import *
 
 
 DEX_FILE = "../data/json/dex.json"

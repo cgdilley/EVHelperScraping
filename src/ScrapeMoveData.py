@@ -1,15 +1,9 @@
-from EVHelperCore.Objects import *
-from EVHelperCore.Utils import FormatUtils, ShowdownUtils
-from EVHelperCore.Utils.DictUtils import unique_by
-
+from EVHelperCore import *
 import Utils
 
-from lxml.html import XHTMLParser, fromstring, Element, tostring
-
-import re
 import json
 import os
-from typing import Collection, Tuple, Iterable, Optional, Union
+from typing import Iterable
 
 HTML_DIR = "../data/html"
 DEX_DIRECTORY = "moves"
@@ -61,15 +55,15 @@ def scrape_page(file: str) -> Iterable[Move]:
 
     if category == "Status":
         yield StatusMove(name=name,
-                         typ=Type[values[0].find("a").text.upper()],
-                         pp=values[4].text.strip(),
+                         type=Type[values[0].find("a").text.upper()],
+                         max_pp=values[4].text.strip(),
                          accuracy=accuracy,
                          description=description,
                          properties=MoveProperties.CONTACT if values[5].text == "Yes" else MoveProperties.NONE)
     else:
         yield DamagingMove(name=name,
-                           typ=Type[values[0].find("a").text.upper()],
-                           pp=values[4].text.strip(),
+                           type=Type[values[0].find("a").text.upper()],
+                           max_pp=values[4].text.strip(),
                            accuracy=accuracy,
                            description=description,
                            base_power=int(values[2].text) if values[2].text != "—" else 0,

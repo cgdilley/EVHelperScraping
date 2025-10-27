@@ -1,16 +1,15 @@
 
 import Utils
 
-from lxml.html import Element, tostring
+from lxml.html import HtmlElement as Element
 import httpx
 
-import re
 import os
-from typing import Collection, Tuple, Iterable
+from typing import Iterable
 
 
 HTML_DIR = "../data/html"
-DEX_FILE = "full_dex.html"
+DEX_FILE = "full_dex_za.html"
 DEX_DIRECTORY = "pokemon"
 
 
@@ -33,17 +32,18 @@ def load_dex_file() -> Element:
 #
 
 
-def scrape_dex_links(root: Element) -> Iterable[Tuple[str, str]]:
-    dex_table = root.find(".//*[@id='pokedex']")
+def scrape_dex_links(root: Element) -> Iterable[tuple[str, str]]:
+    main_block = root.find(".//main")
+    dexes = main_block.findall(".//div[@class='infocard-list infocard-list-pkmn-lg']")
 
-    dex_body = dex_table.find("tbody")
-
-    for row in (row for row in dex_body if row.tag == "tr"):
-        cols = row.findall("td")
-        if len(cols) < 2:
-            continue
-        link_tag = cols[1].find("a")
-        yield link_tag.text, f"https://pokemondb.net{link_tag.get('href')}"
+    # dex_body = dex_table.find("tbody")
+    for dex in dexes:
+        for row in (row for row in dex if row.tag == "div"):
+            cols = row.findall("span")
+            if len(cols) < 2:
+                continue
+            link_tag = cols[1].find("a")
+            yield link_tag.text, f"https://pokemondb.net{link_tag.get('href')}"
 
 
 def download_dex_link(name: str, link: str, ignore_already_downloaded: bool = False):

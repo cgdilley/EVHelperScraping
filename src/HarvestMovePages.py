@@ -1,12 +1,12 @@
+from __future__ import annotations
 
 import Utils
 
-from lxml.html import Element, tostring
+from lxml.html import HtmlElement as Element
 import httpx
 
-import re
 import os
-from typing import Collection, Tuple, Iterable
+from typing import Iterable
 
 
 HTML_DIR = "../data/html"
@@ -33,7 +33,7 @@ def load_dex_file() -> Element:
 #
 
 
-def scrape_dex_links(root: Element) -> Iterable[Tuple[str, str]]:
+def scrape_dex_links(root: Element) -> Iterable[tuple[str, str]]:
     dex_table = root.find(".//*[@id='moves']")
 
     dex_body = dex_table.find("tbody")
