@@ -1,5 +1,5 @@
 import json
-from EVHelperCore import *
+from SprelfPkmn import *
 
 
 DEX_FILE = "../data/json/dex.json"

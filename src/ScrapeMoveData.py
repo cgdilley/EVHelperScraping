@@ -1,4 +1,4 @@
-from EVHelperCore import *
+from SprelfPkmn import *
 import Utils
 
 import json

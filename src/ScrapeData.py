@@ -1,5 +1,5 @@
-from EVHelperCore import FormatUtils
-from EVHelperCore.Objects import *
+from SprelfPkmn import FormatUtils
+from SprelfPkmn.Objects import *
 
 import Utils
 
